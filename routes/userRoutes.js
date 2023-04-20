@@ -1,32 +1,38 @@
 const express = require("express");
 const router = express.Router();
-var { expressjwt: jwt } = require("express-jwt");
 const { jwtObj } = require("../config/request");
-const multer = require("multer");
+const { expressjwt: jwt } = require("express-jwt");
+
 const {
   createUser,
-  getUser,
+  getAllUser,
   getAdmin,
   login,
-  protect,
   restrictTo,
   uploadImage,
   updateUserImage,
   deleteUploadImage,
+  updateUser,
+  updateUserPassword,
+  deleteUser,
 } = require("../controller/userController");
 
 router.route("/user/new").post(createUser);
-
-// protect the route only login user can access
-router.get("/users", protect, getUser);
-
-// protect and restrict to only admin
-router.get("/user", protect, restrictTo("admin"), getAdmin);
-
 router.route("/login").post(login);
 
-router.post("/upload", protect, uploadImage, updateUserImage);
+router.get("/users", getAllUser);
 
-router.delete("/deleteUploadImage", protect, deleteUploadImage);
+// protected routes
+router.use(jwt({ ...jwtObj }));
+
+// protect the route only login user can access
+router.patch("/updateUser", updateUser);
+router.patch("/updateUserPassword", updateUserPassword);
+router.post("/upload", uploadImage, updateUserImage);
+router.delete("/deleteUser", deleteUser);
+router.delete("/deleteUploadImage", deleteUploadImage);
+
+// protect and restrict to only admin
+router.get("/user", restrictTo("admin"), getAdmin);
 
 module.exports = router;

@@ -1,21 +1,26 @@
 const User = require("../models/user");
 const jwt = require("jsonwebtoken");
-const { promisify } = require("util");
 const ErrorHandler = require("../utils/errorhandler");
 const catchAsyncErrors = require("../middleware/catchAsyncErrors");
-const ApiFeatures = require("../utils/apifeatures");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
 
-// config mutlterstroage and multerfilter
+const filterObj = (obj, ...allowedFields) => {
+  const newObj = {};
+  Object.keys(obj).forEach((el) => {
+    if (allowedFields.includes(el)) newObj[el] = obj[el];
+  });
+  return newObj;
+};
 
+// config mutlterstroage and multerfilter
 const multerStorage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, "uploads");
   },
   filename: function (req, file, cb) {
     const ext = file.mimetype.split("/")[1];
-    cb(null, `user-${req.user._id}-${Date.now()}.${ext}`);
+    cb(null, `user-${req.auth.id}-${Date.now()}.${ext}`);
   },
 });
 
@@ -39,13 +44,13 @@ exports.updateUserImage = catchAsyncErrors(async (req, res, next) => {
   // console.log(req.file);
 
   const user = await User.findOneAndUpdate(
-    { _id: req.user._id },
+    { _id: req.auth.id },
     { image: req.file.filename },
     { new: true }
   );
 
   res.status(200).json({
-    status: "success",
+    success: true,
     message: "image upload successfully",
     user,
   });
@@ -53,33 +58,31 @@ exports.updateUserImage = catchAsyncErrors(async (req, res, next) => {
 
 exports.deleteUploadImage = catchAsyncErrors(async (req, res, next) => {
   const user = await User.findOneAndUpdate(
-    { _id: req.user._id },
+    { _id: req.auth.id },
     { image: "default.jpeg" },
     { new: true }
   );
 
   res.status(200).json({
+    success: true,
     message: "image deleted successfully",
   });
 });
 
 exports.createUser = catchAsyncErrors(async (req, res, next) => {
-  let data = await User.create(req.body);
-  const token = jwt.sign({ id: data._id }, process.env.SECRET_KEY, {
-    expiresIn: process.env.JWT_EXPIRY,
-  });
+  const data = await User.create(req.body);
+
   if (data) {
     return res.status(200).json({
       success: true,
       message: "user created successfully",
-      token,
       data,
     });
   } else {
     return next(ErrorHandler("User Not Registered", 404));
   }
 });
-exports.getUser = catchAsyncErrors(async (req, res) => {
+exports.getAllUser = catchAsyncErrors(async (req, res) => {
   let data = await User.find();
 
   res.status(200).json({
@@ -89,9 +92,70 @@ exports.getUser = catchAsyncErrors(async (req, res) => {
 exports.getAdmin = catchAsyncErrors(async (req, res, next) => {
   let data = await User.find({ userType: "admin" });
   res.status(200).json({
+    success: true,
     data,
     total: data.length,
+  });
+});
+
+exports.updateUser = catchAsyncErrors(async (req, res, next) => {
+  // 1) Create error if user POSTs password data
+  if (req.body.password) {
+    return next(
+      new ErrorHandler(
+        "This route is not for password updates. Please use /updateMyPassword.",
+        400
+      )
+    );
+  }
+  // 2) Filtered out unwanted fields names that are not allowed to be updated
+  const filteredBody = filterObj(
+    req.body,
+    "name",
+    "email",
+    "userName",
+    "mobile"
+  );
+  if (req.file) filteredBody.photo = req.file.filename;
+
+  // 3) Update user document
+  const updatedUser = await User.findByIdAndUpdate(req.auth.id, filteredBody, {
+    new: true,
+    runValidators: true,
+  });
+
+  res.status(200).json({
+    status: "success",
+    data: {
+      user: updatedUser,
+    },
+  });
+});
+
+exports.updateUserPassword = catchAsyncErrors(async (req, res, next) => {
+  // 1) Get user from collection
+  const user = await User.findById(req.user.id).select("+password");
+
+  // 2) Check if POSTed current password is correct
+  if (!bcrypt.compareSync(req.body.passwordCurrent, user.password)) {
+    return next(new AppError("Your current password is wrong.", 401));
+  }
+
+  // 3) If so, update password
+  user.password = req.body.password;
+  await user.save();
+
+  res.status(201).json({
     success: true,
+    message: "password updated successfully",
+  });
+});
+
+exports.deleteUser = catchAsyncErrors(async (req, res, next) => {
+  await User.findByIdAndDelete(req.auth.id);
+  res.status(204).json({
+    status: "success",
+    data: null,
   });
 });
 
@@ -119,58 +183,28 @@ exports.login = catchAsyncErrors(async (req, res, next) => {
 
   // Return token to client
   return res.json({
-    status: "success",
-    token,
+    success: true,
     message: "login successfully",
-    data: {
-      user,
-    },
+    token,
+    user,
   });
 });
 
-exports.protect = catchAsyncErrors(async (req, res, next) => {
-  // 1) Getting token and check of it's there
-  let token;
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith("Bearer")
-  ) {
-    // console.log("🔥", req.headers.authorization);
-    token = req.headers.authorization.split(" ")[2];
-  }
-
-  if (!token) {
-    return next(
-      new ErrorHandler(
-        "You are not logged in! Please log in to get access.",
-        401
-      )
-    );
-  }
-
-  // 2) Verification token
-  const decoded = jwt.verify(token, process.env.SECRET_KEY);
-
-  // 3) Check if user still exists
-  const currentUser = await User.findById(decoded.id);
-  if (!currentUser) {
-    return next(
-      new ErrorHandler(
-        "The user belonging to this token does no longer exist.",
-        401
-      )
-    );
-  }
-
-  // GRANT ACCESS TO PROTECTED ROUTE
-  req.user = currentUser;
-  next();
-});
-
 exports.restrictTo = (...userTypes) => {
-  return (req, res, next) => {
-    // roles ['admin', 'user','operator']
-    if (!userTypes.includes(req.user.userType)) {
+  return async (req, res, next) => {
+    const currentUser = await User.findById(req.auth.id);
+
+    console.log(currentUser);
+    if (!currentUser) {
+      return next(
+        new ErrorHandler(
+          "The user belonging to this token does no longer exist.",
+          401
+        )
+      );
+    }
+
+    if (!userTypes.includes(currentUser.userType)) {
       return next(
         new ErrorHandler(
           "You do not have permission to perform this action",
@@ -178,7 +212,6 @@ exports.restrictTo = (...userTypes) => {
         )
       );
     }
-
     next();
   };
 };
