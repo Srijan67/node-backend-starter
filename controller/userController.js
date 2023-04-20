@@ -5,10 +5,19 @@ const catchAsyncErrors = require("../middleware/catchAsyncErrors");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
 
-// config mutlterstroage and multerfilter
+const fs = require("fs");
+
 const multerStorage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, "uploads");
+    const folder = "uploads";
+    fs.mkdir(folder, function (err) {
+      // if folder exists or created successfully, continue
+      // otherwise return an error
+      if (err && err.code != "EEXIST") {
+        return cb(err);
+      }
+      cb(null, folder);
+    });
   },
   filename: function (req, file, cb) {
     const ext = file.mimetype.split("/")[1];
@@ -49,7 +58,20 @@ exports.updateUserImage = catchAsyncErrors(async (req, res, next) => {
 });
 
 exports.deleteUploadImage = catchAsyncErrors(async (req, res, next) => {
-  const user = await User.findOneAndUpdate(
+  const user = await User.findById(req.auth.id);
+  if (!user) {
+    return next(new ErrorHandler("User not found", 404));
+  }
+
+  if (user.image !== "default.jpeg") {
+    fs.unlink(`uploads/${user.image}`, (err) => {
+      if (err) {
+        return next(new ErrorHandler("Error deleting file", 500));
+      }
+    });
+  }
+
+  const updateUser = await User.findOneAndUpdate(
     { _id: req.auth.id },
     { image: "default.jpeg" },
     { new: true }
