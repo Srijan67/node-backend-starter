@@ -5,14 +5,6 @@ const catchAsyncErrors = require("../middleware/catchAsyncErrors");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
 
-const filterObj = (obj, ...allowedFields) => {
-  const newObj = {};
-  Object.keys(obj).forEach((el) => {
-    if (allowedFields.includes(el)) newObj[el] = obj[el];
-  });
-  return newObj;
-};
-
 // config mutlterstroage and multerfilter
 const multerStorage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -99,27 +91,8 @@ exports.getAdmin = catchAsyncErrors(async (req, res, next) => {
 });
 
 exports.updateUser = catchAsyncErrors(async (req, res, next) => {
-  // 1) Create error if user POSTs password data
-  if (req.body.password) {
-    return next(
-      new ErrorHandler(
-        "This route is not for password updates. Please use /updateMyPassword.",
-        400
-      )
-    );
-  }
-  // 2) Filtered out unwanted fields names that are not allowed to be updated
-  const filteredBody = filterObj(
-    req.body,
-    "name",
-    "email",
-    "userName",
-    "mobile"
-  );
-  if (req.file) filteredBody.photo = req.file.filename;
-
   // 3) Update user document
-  const updatedUser = await User.findByIdAndUpdate(req.auth.id, filteredBody, {
+  const updatedUser = await User.findByIdAndUpdate(req.auth.id, req.body, {
     new: true,
     runValidators: true,
   });
@@ -134,15 +107,15 @@ exports.updateUser = catchAsyncErrors(async (req, res, next) => {
 
 exports.updateUserPassword = catchAsyncErrors(async (req, res, next) => {
   // 1) Get user from collection
-  const user = await User.findById(req.user.id).select("+password");
+  const user = await User.findById(req.auth.id);
 
   // 2) Check if POSTed current password is correct
-  if (!bcrypt.compareSync(req.body.passwordCurrent, user.password)) {
-    return next(new AppError("Your current password is wrong.", 401));
+  if (!bcrypt.compareSync(req.body.currentPassword, user.password)) {
+    return next(new ErrorHandler("Your current password is wrong.", 401));
   }
 
   // 3) If so, update password
-  user.password = req.body.password;
+  user.password = req.body.newPassword;
   await user.save();
 
   res.status(201).json({
