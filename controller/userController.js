@@ -155,11 +155,16 @@ exports.deleteUser = catchAsyncErrors(async (req, res, next) => {
 });
 
 exports.login = catchAsyncErrors(async (req, res, next) => {
-  const { email, userName, mobile, password } = req.body;
+  // const { email, userName, mobile, password } = req.body;
+  // const user = await User.findOne({
+  //   $or: [{ email }, { userName }, { mobile }],
+  // });
 
-  // Check if email/username/phone exists in users array
+  const { loginId, password } = req.body;
+
+  // Check if the user exists
   const user = await User.findOne({
-    $or: [{ email }, { userName }, { mobile }],
+    $or: [{ username: loginId }, { email: loginId }, { mobileNumber: loginId }],
   });
 
   if (!user) {
